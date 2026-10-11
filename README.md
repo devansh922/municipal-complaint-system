@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Smart Municipal Complaint Management System (v2: server + database)
 
 Citizens file complaints, officers log in to handle them. A Random Forest suggests the category and priority.
@@ -66,3 +67,7 @@ You need a host that runs Node.js and keeps files between restarts (SQLite write
 - No SMS or email alerts to citizens.
 - Only some states have district lists; other states use a typed district.
 - Not security-audited. Do not use it for real complaints without a review.
+=======
+# municipal-complaint-system
+
+>>>>>>> eec51ac227df7e0ff76b6836350190e19711d6b9
