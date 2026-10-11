@@ -18,8 +18,10 @@ const CATS = {
 const PRIORITIES = ["Low", "Medium", "High"];
 const STATUSES = ["Submitted", "Assigned", "In Progress", "Resolved"];
 
-fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-const db = new Database(path.join(__dirname, "data", "complaints.db"));
+// DATA_DIR lets a host store the database on a persistent disk (for example /var/data)
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new Database(path.join(DATA_DIR, "complaints.db"));
 db.pragma("journal_mode = WAL");
 db.exec(`
 CREATE TABLE IF NOT EXISTS complaints (
@@ -36,6 +38,16 @@ CREATE TABLE IF NOT EXISTS complaints (
 );
 CREATE TABLE IF NOT EXISTS staff (
   username TEXT PRIMARY KEY, salt TEXT NOT NULL, hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS citizens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  salt TEXT NOT NULL, hash TEXT NOT NULL, created INTEGER NOT NULL
+);
+-- which citizen account reported which complaint (own = 1 wrote it, 0 joined an existing one)
+CREATE TABLE IF NOT EXISTS reporters (
+  complaint_n INTEGER NOT NULL, citizen_id INTEGER NOT NULL, own INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (complaint_n, citizen_id)
 );
 `);
 
@@ -54,10 +66,11 @@ const sessions = new Map(); // token -> { user, exp }
 const SESSION_MS = 8 * 3600 * 1000;
 const attempts = new Map(); // ip -> { n, reset }
 
-function cookieToken(req) {
-  const m = /(?:^|;\s*)mc_session=([a-f0-9]{64})/.exec(req.headers.cookie || "");
+function getCookie(req, name) {
+  const m = new RegExp("(?:^|;\\s*)" + name + "=([a-f0-9]{64})").exec(req.headers.cookie || "");
   return m && m[1];
 }
+const cookieToken = (req) => getCookie(req, "mc_session"); // officer session
 function staffOnly(req, res, next) {
   const s = sessions.get(cookieToken(req));
   if (!s || s.exp < Date.now()) return res.status(401).json({ error: "Please log in as an officer." });
@@ -128,6 +141,7 @@ const toObj = (r, forStaff) => {
 // ---------- app ----------
 const app = express();
 app.disable("x-powered-by");
+app.set("trust proxy", 1); // correct client IP and HTTPS detection behind a host's proxy
 app.use((req, res, next) => {
   res.set({ "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY" });
   next();
@@ -141,6 +155,8 @@ app.post("/api/complaints", (req, res) => {
   const wardLabel = f.wardmode === "yes" ? "Ward " + f.ward : f.wardmode === "no" ? "No ward in this area" : "Ward not known";
   const key = normLoc(f.loc);
   const now = Date.now();
+  const cs = citizenFrom(req); // logged-in citizen (optional): links the complaint to their account
+  const link = (n, own) => { if (cs) db.prepare("INSERT OR IGNORE INTO reporters VALUES (?,?,?)").run(n, cs.id, own); };
   const out = db.transaction(() => {
     const dup = db.prepare(
       "SELECT * FROM complaints WHERE cat=? AND district=? AND pin=? AND loc_key=? AND status<>'Resolved' ORDER BY n LIMIT 1"
@@ -149,6 +165,7 @@ app.post("/api/complaints", (req, res) => {
       const log = JSON.parse(dup.log);
       log.push({ s: dup.status, t: now, n: "Another citizen reported the same issue" });
       db.prepare("UPDATE complaints SET votes=votes+1, log=? WHERE n=?").run(JSON.stringify(log), dup.n);
+      link(dup.n, 0);
       return { id: dup.id, dept: dup.dept, due: dup.due, merged: true };
     }
     const c = CATS[f.cat];
@@ -161,6 +178,7 @@ app.post("/api/complaints", (req, res) => {
       f.desc, f.cat, f.pri, c.dept, now, due, lat, lng, photo, JSON.stringify(log));
     const id = "MC-" + String(info.lastInsertRowid).padStart(4, "0");
     db.prepare("UPDATE complaints SET id=? WHERE n=?").run(id, info.lastInsertRowid);
+    link(info.lastInsertRowid, 1);
     return { id, dept: c.dept, due, merged: false };
   })();
   res.status(out.merged ? 200 : 201).json(out);
@@ -193,6 +211,84 @@ app.get("/api/stats", (req, res) => {
   });
 });
 
+// ---------- citizen accounts (completely separate from officer login) ----------
+const csessions = new Map(); // token -> { id, username, exp }
+const regLog = new Map();    // ip -> { n, reset }
+const RX_USER = /^[A-Za-z0-9_.-]{3,30}$/;
+function citizenFrom(req) {
+  const s = csessions.get(getCookie(req, "mc_citizen"));
+  return s && s.exp > Date.now() ? s : null;
+}
+function citizenOnly(req, res, next) {
+  const s = citizenFrom(req);
+  if (!s) return res.status(401).json({ error: "Please log in to your citizen account." });
+  req.citizen = s;
+  next();
+}
+function startCitizenSession(req, res, row) {
+  const token = crypto.randomBytes(32).toString("hex");
+  csessions.set(token, { id: row.id, username: row.username, exp: Date.now() + SESSION_MS });
+  res.set("Set-Cookie", `mc_citizen=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${req.secure ? "; Secure" : ""}`);
+}
+setInterval(() => {
+  const t = Date.now();
+  for (const [k, v] of sessions) if (v.exp < t) sessions.delete(k);
+  for (const [k, v] of csessions) if (v.exp < t) csessions.delete(k);
+}, 600000).unref();
+
+app.post("/api/citizen/register", (req, res) => {
+  const b = req.body || {}, username = str(b.username, 30), pw = typeof b.password === "string" ? b.password : "";
+  const r = regLog.get(req.ip);
+  if (r && r.reset > Date.now() && r.n >= 10) return res.status(429).json({ error: "Too many new accounts from this device. Try again later." });
+  if (!RX_USER.test(username)) return res.status(400).json({ error: "Username must be 3 to 30 characters: letters, digits, dot, dash or underscore." });
+  if (pw.length < 8 || pw.length > 200) return res.status(400).json({ error: "Password must be at least 8 characters." });
+  if (pw.toLowerCase() === username.toLowerCase()) return res.status(400).json({ error: "Password must be different from the username." });
+  const salt = crypto.randomBytes(16).toString("hex");
+  let info;
+  try {
+    info = db.prepare("INSERT INTO citizens (username, salt, hash, created) VALUES (?,?,?,?)").run(username, salt, hashPw(pw, salt), Date.now());
+  } catch (e) {
+    return res.status(409).json({ error: "That username is already taken." });
+  }
+  const cur = r && r.reset > Date.now() ? r : { n: 0, reset: Date.now() + 3600000 };
+  cur.n++; regLog.set(req.ip, cur);
+  startCitizenSession(req, res, { id: Number(info.lastInsertRowid), username });
+  res.status(201).json({ username });
+});
+app.post("/api/citizen/login", (req, res) => {
+  const key = "c:" + req.ip, a = attempts.get(key);
+  if (a && a.reset > Date.now() && a.n >= 5) return res.status(429).json({ error: "Too many attempts. Try again in 15 minutes." });
+  const b = req.body || {}, username = str(b.username, 30), pw = typeof b.password === "string" ? b.password.slice(0, 200) : "";
+  const row = db.prepare("SELECT * FROM citizens WHERE username=?").get(username);
+  const given = Buffer.from(hashPw(pw, row ? row.salt : "0".repeat(32)), "hex"); // same work whether or not the user exists
+  const ok = row && crypto.timingSafeEqual(given, Buffer.from(row.hash, "hex"));
+  if (!ok) {
+    const cur = a && a.reset > Date.now() ? a : { n: 0, reset: Date.now() + 15 * 60 * 1000 };
+    cur.n++; attempts.set(key, cur);
+    return res.status(401).json({ error: "Wrong username or password." });
+  }
+  attempts.delete(key);
+  startCitizenSession(req, res, row);
+  res.json({ username: row.username });
+});
+app.post("/api/citizen/logout", (req, res) => {
+  csessions.delete(getCookie(req, "mc_citizen"));
+  res.set("Set-Cookie", "mc_citizen=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+  res.json({ ok: true });
+});
+app.get("/api/citizen/me", citizenOnly, (req, res) => res.json({ username: req.citizen.username }));
+// A citizen sees only complaints linked to their own account
+app.get("/api/my/complaints", citizenOnly, (req, res) => {
+  const rows = db.prepare(
+    "SELECT c.*, r.own FROM complaints c JOIN reporters r ON r.complaint_n = c.n WHERE r.citizen_id = ? ORDER BY c.n"
+  ).all(req.citizen.id);
+  res.json(rows.map((r) => {
+    const o = toObj(r, false);
+    if (!r.own) o.desc = "You reported the same issue. It was merged with an earlier complaint, and its updates appear here.";
+    return o;
+  }));
+});
+
 // Officer login
 app.post("/api/login", (req, res) => {
   const ip = req.ip;
@@ -209,7 +305,7 @@ app.post("/api/login", (req, res) => {
   attempts.delete(ip);
   const token = crypto.randomBytes(32).toString("hex");
   sessions.set(token, { user, exp: Date.now() + SESSION_MS });
-  res.set("Set-Cookie", `mc_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`);
+  res.set("Set-Cookie", `mc_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${req.secure ? "; Secure" : ""}`);
   res.json({ user });
 });
 app.post("/api/logout", (req, res) => {
