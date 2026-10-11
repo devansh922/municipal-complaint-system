@@ -18,7 +18,7 @@ const GEO={
 "Goa":["North Goa","South Goa"]};
 const STATUS=["Submitted","Assigned","In Progress","Resolved"];
 const DAY=864e5;
-let DB=[],view="home",authed=false,STATS=null,GPS=null,PHOTO=null;
+let DB=[],view="home",authed=false,STATS=null,GPS=null,PHOTO=null,CIT=null,MINE=[],cmode="login";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const cls=s=>s.replace(/ /g,"-");
@@ -44,6 +44,32 @@ async function loadStaff(){try{DB=await api("GET","/api/complaints");renderStaff
 function setAuth(on,user){authed=on;$("login").hidden=on;$("staffbody").hidden=!on;if(on){$("who").textContent="Logged in as "+user;loadStaff()}else DB=[]}
 async function checkMe(){try{const m=await api("GET","/api/me");setAuth(true,m.user)}catch(e){setAuth(false)}}
 async function doLogin(){$("e_login").textContent="";try{const m=await api("POST","/api/login",{username:$("lu").value.trim(),password:$("lp").value});$("lp").value="";setAuth(true,m.user)}catch(e){$("e_login").textContent=e.message}}
+/* ---------- citizen account ---------- */
+async function checkCitizen(){try{CIT=(await api("GET","/api/citizen/me")).username}catch(e){CIT=null}paintCitizen()}
+function paintCitizen(){
+ $("cauth").hidden=!!CIT;$("cbody").hidden=!CIT;
+ document.querySelector('nav button[data-t="account"]').textContent=CIT?"My account ("+CIT+")":"My account";
+ $("acctnote").textContent=CIT?"You are logged in as "+CIT+". This complaint will appear in your account.":"Tip: create an account (My account tab) to keep all your complaints in one place. You can also report without one.";
+ if(CIT)loadMine();else{MINE=[];}}
+async function loadMine(){try{MINE=await api("GET","/api/my/complaints");renderMine()}catch(e){if(e.status===401){CIT=null;paintCitizen()}}}
+function renderMine(){
+ $("cwho").textContent="Welcome, "+CIT;
+ $("clist").innerHTML=MINE.length?MINE.slice().reverse().map(tcard).join(""):'<div class="card">You have not reported anything yet. Use "Report a new issue".</div>'}
+function setCmode(m){cmode=m;const r=m==="register";
+ $("ctitle").textContent=r?"Create a citizen account":"Citizen login";$("cgo").textContent=r?"Create account":"Log in";
+ $("cp2box").hidden=!r;$("cuhint").hidden=!r;$("cphint").hidden=!r;
+ $("cmodeL").className=r?"btn ghost":"btn";$("cmodeR").className=r?"btn":"btn ghost";
+ $("cp").autocomplete=r?"new-password":"current-password";$("e_cauth").textContent=""}
+async function cGo(){
+ const err=m=>{$("e_cauth").textContent=m},u=$("cu").value.trim(),p=$("cp").value;err("");
+ if(cmode==="register"){
+  if(!/^[A-Za-z0-9_.-]{3,30}$/.test(u))return err("Username must be 3 to 30 characters: letters, digits, dot, dash or underscore.");
+  if(p.length<8)return err("Password must be at least 8 characters.");
+  if(p!==$("cp2").value)return err("The two passwords do not match.")}
+ else if(!u||!p)return err("Enter your username and password.");
+ try{const m=await api("POST",cmode==="register"?"/api/citizen/register":"/api/citizen/login",{username:u,password:p});CIT=m.username;$("cp").value="";$("cp2").value="";paintCitizen()}
+ catch(e){err(e.message)}}
+async function cLogout(){try{await api("POST","/api/citizen/logout")}catch(e){}CIT=null;paintCitizen()}
 async function doLogout(){try{await api("POST","/api/logout")}catch(e){}setAuth(false)}
 
 /* ---------- Random Forest (trained in the browser when the page loads) ---------- */
@@ -146,11 +172,12 @@ async function confirmSubmit(){
  try{
   const c=await api("POST","/api/complaints",{...p,lat:GPS&&GPS.lat,lng:GPS&&GPS.lng,photo:PHOTO});
   pending=null;$("review").hidden=true;$("done").hidden=false;
-  $("done").innerHTML=`<h3>${c.merged?"Added to an existing complaint":"Complaint submitted"}</h3><p>Your complaint ID is <b style="font-size:24px">${c.id}</b>. Keep it, and use it with your mobile number to track progress.</p><p class="meta">Assigned to ${esc(c.dept)}. Target resolution by ${fmt(c.due)}.</p><div class="ctrl"><button class="btn" id="trk">Track this complaint</button><button class="btn ghost" id="again">File another complaint</button></div>`;
+  $("done").innerHTML=`<h3>${c.merged?"Added to an existing complaint":"Complaint submitted"}</h3><p>Your complaint ID is <b style="font-size:24px">${c.id}</b>. Keep it, and use it with your mobile number to track progress.</p><p class="meta">Assigned to ${esc(c.dept)}. Target resolution by ${fmt(c.due)}.</p><div class="ctrl"><button class="btn" id="trk">Track this complaint</button>${CIT?'<button class="btn" id="mine">View in my account</button>':""}<button class="btn ghost" id="again">File another complaint</button></div>`;
   ["name","phone","pin","loc","desc","ward","district2"].forEach(i=>$(i).value="");$("wardmode").value="";$("wardbox").hidden=true;$("state").value="";fillDistricts();
   GPS=null;PHOTO=null;$("photo").value="";$("gpsmsg").textContent="Not added";$("photomsg").textContent="The photo is shrunk automatically before it is sent.";
   $("again").onclick=()=>{$("done").hidden=true;$("formcard").hidden=false};
   $("trk").onclick=()=>{$("tid").value=c.id;$("tphone").value=p.phone;go("track");track()};
+  if($("mine"))$("mine").onclick=()=>go("account");
  }catch(e){$("confirm").disabled=false;$("e_confirm").textContent=e.message+" "+Object.values(e.fields||{}).join(" ")}}
 
 const tcard=c=>`<div class="card"><div class="row"><h3 style="display:flex;gap:10px;align-items:center">${ic(c.cat)}${c.id}: ${esc(c.cat)}</h3><span class="tag s-${cls(c.status)}">${c.status}</span></div>
@@ -225,9 +252,9 @@ async function exportXlsx(){
  try{const d=await window.claude.use("downloads");if(d){await d.save({filename:"complaints.xlsx",data:blob});return}}catch(e){if(e&&e.code==="declined")return}
  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="complaints.xlsx";document.body.appendChild(a);a.click();a.remove()}
 
-function go(n){view=n;["home","report","track","staff"].forEach(x=>$(x).hidden=x!==n);
+function go(n){view=n;["home","report","track","account","staff"].forEach(x=>$(x).hidden=x!==n);
  document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-selected",b.dataset.t===n));
- window.scrollTo(0,0);if(n==="home")loadStats();if(n==="staff")checkMe();render()}
+ window.scrollTo(0,0);if(n==="home")loadStats();if(n==="staff")checkMe();if(n==="account")checkCitizen();render()}
 
 /* ---------- setup ---------- */
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>go(b.dataset.t));
@@ -257,7 +284,9 @@ $("rfinfo").textContent=`A Random Forest of ${RF_CAT.trees.length} decision tree
 $("submit").onclick=check;$("csv").onclick=exportXlsx;
 $("tbtn").onclick=track;[$("tid"),$("tphone")].forEach(el=>el.onkeydown=e=>{if(e.key==="Enter")track()});
 $("tphone").oninput=()=>{$("tphone").value=$("tphone").value.replace(/\D/g,"").slice(0,10)};
-$("lbtn").onclick=doLogin;$("lout").onclick=doLogout;[$("lu"),$("lp")].forEach(el=>el.onkeydown=e=>{if(e.key==="Enter")doLogin()});
+$("lbtn").onclick=doLogin;$("lout").onclick=doLogout;
+$("cmodeL").onclick=()=>setCmode("login");$("cmodeR").onclick=()=>setCmode("register");$("cgo").onclick=cGo;$("clout").onclick=cLogout;$("cnew").onclick=()=>go("report");
+[$("cu"),$("cp"),$("cp2")].forEach(el=>el.onkeydown=e=>{if(e.key==="Enter")cGo()});[$("lu"),$("lp")].forEach(el=>el.onkeydown=e=>{if(e.key==="Enter")doLogin()});
 $("gps").onclick=()=>{if(!navigator.geolocation){$("gpsmsg").textContent="Your browser cannot share location.";return}
  $("gpsmsg").textContent="Finding your location...";
  navigator.geolocation.getCurrentPosition(p=>{GPS={lat:+p.coords.latitude.toFixed(6),lng:+p.coords.longitude.toFixed(6)};$("gpsmsg").textContent="Location added ("+GPS.lat+", "+GPS.lng+")"},()=>{GPS=null;$("gpsmsg").textContent="Could not get your location. You can still submit without it."},{timeout:10000})};
@@ -269,4 +298,4 @@ $("photo").onchange=()=>{const f=$("photo").files[0];PHOTO=null;if(!f){$("photom
   PHOTO=d;$("photomsg").textContent="Photo ready ("+Math.round(d.length*0.75/1024)+" KB)"};
  img.onerror=()=>{$("photomsg").textContent="Could not read that image.";PHOTO=null};img.src=url};
 $("fs").onchange=$("fw").onchange=renderList;
-render();loadStats();setInterval(()=>{if(view==="staff"&&authed)loadStaff();if(view==="home")loadStats()},15000);
+render();loadStats();checkCitizen();setInterval(()=>{if(view==="staff"&&authed)loadStaff();if(view==="home")loadStats();if(view==="account"&&CIT)loadMine()},15000);
