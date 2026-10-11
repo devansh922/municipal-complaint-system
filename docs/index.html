@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Smart Municipal Complaint Management System</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="wrap"><div class="top">
+  <span class="badge">MC</span><span class="brand">Smart Municipal Complaint System</span>
+  <nav role="tablist">
+    <button role="tab" data-t="home" aria-selected="true">Home</button>
+    <button role="tab" data-t="report" aria-selected="false">Report an issue</button>
+    <button role="tab" data-t="track" aria-selected="false">Track</button>
+    <button role="tab" data-t="staff" aria-selected="false">Officer dashboard</button>
+  </nav></div></div></header>
+<div id="banner" role="alert" hidden></div>
+
+<div id="home">
+  <div class="hero"><div class="wrap herogrid"><div>
+    <h1>Every complaint gets a number. Every number gets an answer.</h1>
+    <p>Report potholes, garbage, water leaks and broken street lights to your municipality. Get a tracking ID, see who is handling it, and know the date it will be fixed.</p>
+    <div class="ctas"><button class="btn alt" data-go="report">Report an issue</button><button class="btn ghost" data-go="track">Track a complaint</button></div></div><svg class="skyline" viewBox="0 0 320 200" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M10 190h300"/><rect x="30" y="90" width="50" height="100"/><rect x="95" y="50" width="60" height="140"/><rect x="170" y="110" width="45" height="80"/><rect x="230" y="70" width="55" height="120"/><path d="M110 70h8M135 70h8M110 95h8M135 95h8M110 120h8M135 120h8M45 110h8M62 110h8M45 135h8M62 135h8M245 90h8M265 90h8M245 115h8M265 115h8"/><path d="M122 50V30M122 30l14 5-14 5"/></svg>
+  </div></div>
+  <div class="wrap">
+    <div class="live" id="live"></div>
+    <section class="blk"><h2>What you can report</h2><div class="grid g3" id="tiles"></div></section>
+    <section class="blk"><h2>Latest complaints</h2><div class="grid g3" id="latest"></div></section>
+    <section class="blk"><h2>How it works</h2>
+      <div class="grid g3" style="grid-template-columns:repeat(4,1fr)" id="steps"></div></section>
+    <section class="blk"><h2>What makes it smart</h2>
+      <div class="grid">
+        <div class="card"><div class="fh"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg></span><h3>Random Forest prediction</h3></div><p class="meta" id="rfinfo"></p></div>
+        <div class="card"><div class="fh"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5zM3 13l9 5 9-5"/></svg></span><h3>Duplicate detection</h3></div><p class="meta">The same issue on the same street is merged into one complaint with a report count, so officers see which problems affect most people.</p></div>
+        <div class="card"><div class="fh"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><h3>Service deadlines</h3></div><p class="meta">Each category has a fixed resolution time. Complaints past that date are flagged Overdue on the dashboard.</p></div>
+        <div class="card"><div class="fh"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3 3 7 3s7-1.3 7-3"/></svg></span><h3>Ordered, saved records</h3></div><p class="meta">Complaints are numbered MC-0001, MC-0002 and so on in the order received, stored in a database, and exportable to Excel in that order.</p></div>
+      </div></section>
+    
+  </div>
+</div>
+
+<main class="wrap" style="padding:22px 16px 0">
+<section id="report" hidden>
+  <div class="card" id="formcard"><h2>Report an issue</h2>
+  <div class="grid" style="margin-top:12px">
+    <div class="full"><h3>Your details</h3></div>
+    <div><label for="name">Full name</label><input id="name" autocomplete="name" maxlength="60"><p class="err" id="e_name"></p></div>
+    <div><label for="phone">Mobile number</label><input id="phone" inputmode="numeric" autocomplete="tel" maxlength="10" placeholder="10 digits, e.g. 9876543210"><p class="err" id="e_phone"></p></div>
+    <div class="full"><h3>Where is the problem?</h3></div>
+    <div><label for="state">State or Union Territory</label><select id="state"></select><p class="err" id="e_state"></p></div>
+    <div><label for="district">District</label><select id="district" disabled><option value="">Choose a state first</option></select><input id="district2" placeholder="Type your district" maxlength="50" hidden style="margin-top:6px"><p class="err" id="e_district"></p></div>
+    <div class="full"><label for="wardmode">Does your area have ward numbers?</label>
+      <select id="wardmode"><option value="">Select one</option><option value="yes">Yes, my area has a ward number</option><option value="no">No, my area has no wards (village or Gram Panchayat)</option><option value="unsure">I am not sure</option></select>
+      <p class="hint">Wards exist in cities and towns run by a City Corporation or Municipality. Many villages and rural areas have none. If you are not sure, choose that option and the officer will find the ward from your street.</p><p class="err" id="e_wardmode"></p></div>
+    <div id="wardbox" hidden><label for="ward">Ward number</label><input id="ward" inputmode="numeric" maxlength="3" placeholder="e.g. 12"><p class="err" id="e_ward"></p></div>
+    <div><label for="pin">PIN code</label><input id="pin" inputmode="numeric" maxlength="6" placeholder="6 digits"><p class="err" id="e_pin"></p></div>
+    <div class="full"><label for="loc">Street, area or landmark</label><input id="loc" maxlength="100"><p class="err" id="e_loc"></p></div>
+    <div class="full"><label>Pin the exact spot (optional)</label><div class="ctrl" style="margin-top:0"><button type="button" class="btn ghost" id="gps" style="font-size:16px">Use my current location</button><span class="meta" id="gpsmsg">Not added</span></div></div>
+    <div class="full"><label for="photo">Photo of the problem (optional)</label><input id="photo" type="file" accept="image/*"><p class="hint" id="photomsg">The photo is shrunk automatically before it is sent.</p></div>
+    <div class="full"><h3>The problem</h3></div>
+    <div class="full"><label for="desc">What is the problem?</label><textarea id="desc" placeholder="Example: Large pothole near the bus stop, two bikes slipped yesterday"></textarea>
+      <p class="hint" id="smart">A Random Forest model predicts the category and priority as you type.</p><p class="err" id="e_desc"></p></div>
+    <div><label for="cat">Category</label><div style="display:flex;gap:8px"><span id="caticon"></span><select id="cat"></select></div></div>
+    <div><label for="pri">Priority</label><select id="pri"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+    <div class="full"><button class="btn" id="submit">Check and review</button></div>
+  </div></div>
+  <div class="card" id="review" hidden></div>
+  <div class="card ok" id="done" hidden></div>
+</section>
+
+<section id="track" hidden>
+  <div class="card"><h2>Track complaint</h2>
+    <div class="grid" style="margin-top:12px">
+      <div><label for="tid">Complaint ID</label><input id="tid" placeholder="MC-0001"></div>
+      <div><label for="tphone">Mobile number used</label><input id="tphone" inputmode="numeric" maxlength="10" placeholder="10 digits"></div>
+      <div class="full"><button class="btn" id="tbtn">Check status</button> <span class="hint">Both are needed, so only you can see your complaint.</span></div>
+    </div></div>
+  <div id="tres"></div>
+</section>
+
+<section id="staff" hidden>
+  <div class="card" id="login"><h2>Officer login</h2>
+    <div class="grid" style="margin-top:12px"><div><label for="lu">Username</label><input id="lu" autocomplete="username"></div><div><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password"></div>
+    <div class="full"><button class="btn" id="lbtn">Log in</button> <span class="err" id="e_login" style="display:inline"></span></div></div></div>
+  <div id="staffbody" hidden>
+  <div class="row" style="margin-bottom:12px"><span class="meta" id="who"></span><button class="btn ghost" id="lout" style="font-size:16px">Log out</button></div>
+  <div class="stats" id="stats"></div>
+  <div class="card"><h3>Complaints by category</h3><div id="bars" style="margin-top:8px"></div></div>
+  <div class="card">
+    <div class="row"><h3>All complaints, in order received</h3>
+      <div class="ctrl" style="margin:0"><select id="fs" aria-label="Filter by status"><option value="">All statuses</option></select><select id="fw" aria-label="Filter by district"><option value="">All districts</option></select><button class="btn" id="csv" style="font-size:16px">Download Excel</button></div></div>
+    <div id="list"></div>
+  </div>
+  </div>
+</section>
+</main>
+
+<p id="store" role="status" class="meta" style="text-align:center;padding:28px 16px 0"></p>
+
+<script src="script.js"></script>
+</body>
+</html>
